@@ -64,49 +64,63 @@ export default function Home() {
     setIsConverting(true);
     setResults([]);
     setProgress(0);
-    addLog("Initializing conversion engine...", "process");
+    addLog("System Check: Initializing engine...", "process");
 
     try {
-      const lib = await import("heic2any");
+      // More robust dynamic import
+      const lib: any = await import("heic2any");
       const heic2any = lib.default || lib;
-      addLog("Engine loaded. Starting batch processing...", "info");
+      
+      if (typeof heic2any !== "function") {
+        throw new Error("Conversion engine failed to initialize correctly (Not a function).");
+      }
+      
+      addLog("System Check: Engine ready.", "success");
+
+      const converted: ConvertedFile[] = [];
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const fileId = Math.random().toString(36).substr(2, 9);
-        addLog(`Processing [${i+1}/${files.length}]: ${file.name}`, "process");
+        addLog(`Converting [${i+1}/${files.length}]: ${file.name}`, "process");
         
+        setFileStatuses(prev => ({ ...prev, [file.name]: "converting" }));
+
         try {
-          addLog(`Starting conversion for ${file.name}...`, "process");
-          const blob = await (heic2any as any)({
+          // Verify file size
+          if (file.size > 50 * 1024 * 1024) {
+            throw new Error("File too large (>50MB).");
+          }
+
+          const blob = await heic2any({
             blob: file,
             toType: "image/jpeg",
-            quality: 0.7, // Slightly lower quality to save memory
+            quality: 0.6, // Lower quality for better success rate on large files
           });
           
           const resultBlob = Array.isArray(blob) ? blob[0] : blob;
           const fileName = file.name.replace(/\.[^/.]+$/, "") + ".jpg";
           
           const res: ConvertedFile = {
-            id: fileId,
+            id: Math.random().toString(36).substr(2, 9),
             name: fileName,
             url: URL.createObjectURL(resultBlob),
             blob: resultBlob,
           };
           
           setResults(prev => [...prev, res]);
-          addLog(`✓ Successfully converted: ${fileName}`, "success");
+          setFileStatuses(prev => ({ ...prev, [file.name]: "done" }));
+          addLog(`✓ Converted: ${fileName}`, "success");
         } catch (err: any) {
-          const errorMsg = err?.message || "Unknown conversion error";
+          const errorMsg = err?.message || "Internal conversion error";
           addLog(`✗ Error on ${file.name}: ${errorMsg}`, "error");
-          console.error("Conversion detail:", err);
+          console.error("Detailed conversion error:", err);
           setFileStatuses(prev => ({ ...prev, [file.name]: "error" }));
         }
         setProgress(Math.round(((i + 1) / files.length) * 100));
       }
-      addLog("Batch conversion finished!", "success");
-    } catch (error) {
-      addLog("CRITICAL: Failed to load conversion engine", "error");
+      addLog("Batch processing complete.", "info");
+    } catch (error: any) {
+      addLog(`FATAL: ${error?.message || "Engine load failed"}`, "error");
       console.error(error);
     } finally {
       setIsConverting(false);
