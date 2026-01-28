@@ -67,34 +67,35 @@ export default function Home() {
     addLog("System Check: Initializing engine...", "process");
 
     try {
-      // More robust dynamic import
+      addLog("System Check: Loading conversion engine...", "process");
       const lib: any = await import("heic2any");
+      // Handle both default and named exports
       const heic2any = lib.default || lib;
       
       if (typeof heic2any !== "function") {
-        throw new Error("Conversion engine failed to initialize correctly (Not a function).");
+        throw new Error("Conversion engine is not a function. Possible loading error.");
       }
       
-      addLog("System Check: Engine ready.", "success");
+      addLog("System Check: Engine ready. Starting batch...", "success");
 
       const converted: ConvertedFile[] = [];
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        addLog(`Converting [${i+1}/${files.length}]: ${file.name}`, "process");
+        addLog(`>> Processing [${i+1}/${files.length}]: ${file.name}`, "process");
         
         setFileStatuses(prev => ({ ...prev, [file.name]: "converting" }));
 
         try {
-          // Verify file size
-          if (file.size > 50 * 1024 * 1024) {
-            throw new Error("File too large (>50MB).");
+          // Verify file is actually a HEIC
+          if (!file.name.toLowerCase().endsWith(".heic")) {
+            throw new Error("Not a .heic file.");
           }
 
           const blob = await heic2any({
             blob: file,
             toType: "image/jpeg",
-            quality: 0.6, // Lower quality for better success rate on large files
+            quality: 0.5,
           });
           
           const resultBlob = Array.isArray(blob) ? blob[0] : blob;
@@ -109,19 +110,21 @@ export default function Home() {
           
           setResults(prev => [...prev, res]);
           setFileStatuses(prev => ({ ...prev, [file.name]: "done" }));
-          addLog(`✓ Converted: ${fileName}`, "success");
+          addLog(`✓ Done: ${fileName}`, "success");
+          
+          // Small delay to let browser breathe
+          await new Promise(r => setTimeout(r, 100));
         } catch (err: any) {
-          const errorMsg = err?.message || "Internal conversion error";
-          addLog(`✗ Error on ${file.name}: ${errorMsg}`, "error");
-          console.error("Detailed conversion error:", err);
+          addLog(`✗ Failed ${file.name}: ${err?.message || "Internal error"}`, "error");
+          console.error(err);
           setFileStatuses(prev => ({ ...prev, [file.name]: "error" }));
         }
         setProgress(Math.round(((i + 1) / files.length) * 100));
       }
-      addLog("Batch processing complete.", "info");
+      addLog("All tasks completed.", "info");
     } catch (error: any) {
-      addLog(`FATAL: ${error?.message || "Engine load failed"}`, "error");
-      console.error(error);
+      addLog(`FATAL ENGINE ERROR: ${error?.message || "Check network/console"}`, "error");
+      console.error("Global Engine Error:", error);
     } finally {
       setIsConverting(false);
     }
