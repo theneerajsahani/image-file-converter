@@ -77,10 +77,11 @@ export default function Home() {
         addLog(`Processing [${i+1}/${files.length}]: ${file.name}`, "process");
         
         try {
+          addLog(`Starting conversion for ${file.name}...`, "process");
           const blob = await (heic2any as any)({
             blob: file,
             toType: "image/jpeg",
-            quality: 0.8,
+            quality: 0.7, // Slightly lower quality to save memory
           });
           
           const resultBlob = Array.isArray(blob) ? blob[0] : blob;
@@ -95,9 +96,11 @@ export default function Home() {
           
           setResults(prev => [...prev, res]);
           addLog(`✓ Successfully converted: ${fileName}`, "success");
-        } catch (err) {
-          addLog(`✗ Failed to convert: ${file.name}`, "error");
-          console.error(err);
+        } catch (err: any) {
+          const errorMsg = err?.message || "Unknown conversion error";
+          addLog(`✗ Error on ${file.name}: ${errorMsg}`, "error");
+          console.error("Conversion detail:", err);
+          setFileStatuses(prev => ({ ...prev, [file.name]: "error" }));
         }
         setProgress(Math.round(((i + 1) / files.length) * 100));
       }
