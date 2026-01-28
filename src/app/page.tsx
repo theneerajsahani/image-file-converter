@@ -1,96 +1,81 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 
 interface ConvertedFile {
+  id: string;
   name: string;
   url: string;
   blob: Blob;
-  status: "pending" | "converting" | "done" | "error";
+}
+
+interface LogEntry {
+  id: string;
+  timestamp: string;
+  message: string;
+  type: "info" | "success" | "error" | "process";
 }
 
 export default function Home() {
   const [files, setFiles] = useState<File[]>([]);
   const [isConverting, setIsConverting] = useState(false);
-  const [fileStatuses, setFileStatuses] = useState<Record<string, "pending" | "converting" | "done" | "error">>({});
   const [results, setResults] = useState<ConvertedFile[]>([]);
   const [progress, setProgress] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
-  const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const consoleEndRef = useRef<HTMLDivElement>(null);
 
-  const log = (msg: string) => {
-    console.log(msg);
-    setDebugLog(prev => [...prev.slice(-4), msg]);
+  const addLog = (message: string, type: LogEntry["type"] = "info") => {
+    const newLog: LogEntry = {
+      id: Math.random().toString(36).substr(2, 9),
+      timestamp: new Date().toLocaleTimeString(),
+      message,
+      type
+    };
+    setLogs(prev => [...prev.slice(-49), newLog]);
   };
+
+  useEffect(() => {
+    consoleEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs]);
 
   const handleFiles = (selectedFiles: FileList | File[] | null) => {
     if (!selectedFiles) return;
     
     const incoming = Array.from(selectedFiles);
-    log(`Selected ${incoming.length} files`);
-    
     const validFiles = incoming
       .filter(f => f.name.toLowerCase().endsWith(".heic"))
       .slice(0, 100);
 
-    log(`Valid HEIC: ${validFiles.length}`);
-
     if (validFiles.length === 0) {
-      alert("Please select .heic files");
+      addLog("No valid .heic files detected", "error");
+      alert("Please drop .heic files only.");
       return;
     }
 
     setFiles(validFiles);
-    const initialStatuses: Record<string, "pending" | "converting" | "done" | "error"> = {};
-    validFiles.forEach(f => initialStatuses[f.name] = "pending");
-    setFileStatuses(initialStatuses);
     setResults([]);
     setProgress(0);
+    addLog(`Loaded ${validFiles.length} files. Ready to convert.`, "success");
   };
-
-  const onDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  }, []);
-
-  const onDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  }, []);
-
-  const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-    log("Files dropped");
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFiles(e.dataTransfer.files);
-    }
-  }, []);
 
   const convertImages = async () => {
     if (files.length === 0) return;
     setIsConverting(true);
     setResults([]);
     setProgress(0);
-    log("Starting conversion...");
+    addLog("Initializing conversion engine...", "process");
 
     try {
-      // Dynamic import with fallback
       const lib = await import("heic2any");
       const heic2any = lib.default || lib;
-      log("Library loaded");
-
-      const converted: ConvertedFile[] = [];
+      addLog("Engine loaded. Starting batch processing...", "info");
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        log(`Converting ${file.name}...`);
+        const fileId = Math.random().toString(36).substr(2, 9);
+        addLog(`Processing [${i+1}/${files.length}]: ${file.name}`, "process");
         
-        setFileStatuses(prev => ({ ...prev, [file.name]: "converting" }));
-
         try {
           const blob = await (heic2any as any)({
             blob: file,
@@ -102,33 +87,31 @@ export default function Home() {
           const fileName = file.name.replace(/\.[^/.]+$/, "") + ".jpg";
           
           const res: ConvertedFile = {
+            id: fileId,
             name: fileName,
             url: URL.createObjectURL(resultBlob),
             blob: resultBlob,
-            status: "done"
           };
           
-          converted.push(res);
-          setFileStatuses(prev => ({ ...prev, [file.name]: "done" }));
           setResults(prev => [...prev, res]);
+          addLog(`✓ Successfully converted: ${fileName}`, "success");
         } catch (err) {
-          log(`Error on ${file.name}`);
+          addLog(`✗ Failed to convert: ${file.name}`, "error");
           console.error(err);
-          setFileStatuses(prev => ({ ...prev, [file.name]: "error" }));
         }
         setProgress(Math.round(((i + 1) / files.length) * 100));
       }
-      log("Batch complete");
+      addLog("Batch conversion finished!", "success");
     } catch (error) {
-      log("Global conversion error");
+      addLog("CRITICAL: Failed to load conversion engine", "error");
       console.error(error);
-      alert("Failed to load conversion engine.");
     } finally {
       setIsConverting(false);
     }
   };
 
-  const downloadAll = async () => {
+  const downloadZip = async () => {
+    addLog("Generating ZIP archive...", "process");
     const JSZip = (await import("jszip")).default;
     const zip = new JSZip();
     results.forEach(res => zip.file(res.name, res.blob));
@@ -138,81 +121,112 @@ export default function Home() {
     link.href = url;
     link.download = "converted_images.zip";
     link.click();
+    addLog("ZIP download started.", "success");
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center py-12 px-4 bg-zinc-50 dark:bg-zinc-950 font-sans transition-colors duration-300">
-      <div className="w-full max-w-2xl p-8 bg-white dark:bg-zinc-900 rounded-[2.5rem] shadow-2xl border border-zinc-200 dark:border-zinc-800">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-black text-zinc-900 dark:text-zinc-50 tracking-tight">HEIC Converted</h1>
-          <div className="flex gap-2">
-             {debugLog.length > 0 && <span className="text-[10px] text-zinc-400 font-mono animate-pulse">{debugLog[debugLog.length-1]}</span>}
-          </div>
-        </div>
+    <div className="flex min-h-screen flex-col items-center py-10 px-4 bg-[#0a0a0a] text-zinc-100 font-mono">
+      <div className="w-full max-w-2xl flex flex-col gap-6">
         
-        <div className="flex flex-col gap-6">
-          <div 
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-            onDrop={onDrop}
-            className={`
-              relative border-4 border-dashed rounded-[2rem] p-10
-              flex flex-col items-center justify-center gap-4
-              transition-all duration-300
-              ${isDragging 
-                ? "border-emerald-500 bg-emerald-500/5 scale-[1.01]" 
-                : "border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-950/50 hover:border-zinc-300 dark:hover:border-zinc-700"
-              }
-            `}
-          >
-            <input type="file" accept=".heic" multiple onChange={(e) => handleFiles(e.target.files)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20" />
-            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all ${isDragging ? 'bg-emerald-500 text-white' : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400'}`}>
-              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
-            </div>
-            <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Drop HEIC files here</p>
+        {/* Header */}
+        <div className="flex justify-between items-end border-b border-zinc-800 pb-6">
+          <div className="space-y-1">
+            <h1 className="text-xl font-bold tracking-tighter text-emerald-500 uppercase">HEIC_CONVERTER_V2.0</h1>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Local Memory • Client Side • Batch Enabled</p>
           </div>
+          <div className="text-[10px] text-right font-bold text-zinc-600">
+            STATUS: {isConverting ? "RUNNING" : "READY"}
+          </div>
+        </div>
 
-          {files.length > 0 && (
-            <div className="bg-zinc-50 dark:bg-zinc-950/50 rounded-3xl p-6 border border-zinc-100 dark:border-zinc-800">
-              <div className="flex justify-between items-center mb-4">
-                <span className="text-xs font-black uppercase tracking-widest text-zinc-400">{files.length} Files Selected</span>
-                {!isConverting && results.length === 0 && (
-                  <button onClick={convertImages} className="px-6 py-2 bg-zinc-900 dark:bg-zinc-50 text-zinc-50 dark:text-zinc-900 rounded-full font-black text-xs uppercase tracking-widest hover:scale-105 active:scale-95 transition-all">Convert All</button>
-                )}
-              </div>
-              
-              <div className="max-h-60 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-                {files.map((file, i) => (
-                  <div key={i} className="flex items-center justify-between p-3 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-100 dark:border-zinc-800 text-xs">
-                    <span className="truncate max-w-[200px] text-zinc-600 dark:text-zinc-400 font-medium">{file.name}</span>
-                    <div className="flex items-center gap-3">
-                      {fileStatuses[file.name] === "pending" && <span className="text-zinc-400 font-bold uppercase text-[9px]">Waiting</span>}
-                      {fileStatuses[file.name] === "converting" && <span className="text-blue-500 font-bold uppercase text-[9px] animate-pulse">Converting...</span>}
-                      {fileStatuses[file.name] === "done" && <span className="text-emerald-500 font-bold uppercase text-[9px]">Done</span>}
-                      {fileStatuses[file.name] === "error" && <span className="text-red-500 font-bold uppercase text-[9px]">Failed</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+        {/* Upload Zone */}
+        <div 
+          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleFiles(e.dataTransfer.files); }}
+          className={`
+            relative h-48 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-3 transition-all
+            ${isDragging ? "border-emerald-500 bg-emerald-500/5" : "border-zinc-800 bg-zinc-900/30 hover:border-zinc-700"}
+          `}
+        >
+          <input type="file" accept=".heic" multiple onChange={(e) => handleFiles(e.target.files)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20" />
+          <svg className={`w-8 h-8 ${isDragging ? "text-emerald-500" : "text-zinc-600"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+          </svg>
+          <p className="text-xs font-bold uppercase tracking-widest">{isDragging ? "Drop Files Now" : "Drag & Drop HEIC Files"}</p>
+        </div>
 
-          {isConverting && (
-            <div className="px-2 space-y-2">
-              <div className="w-full bg-zinc-100 dark:bg-zinc-800 h-2 rounded-full overflow-hidden">
-                <div className="bg-emerald-500 h-full transition-all duration-500" style={{ width: `${progress}%` }}></div>
-              </div>
-            </div>
-          )}
-
+        {/* Action Bar */}
+        <div className="flex gap-4">
+          <button 
+            onClick={convertImages}
+            disabled={files.length === 0 || isConverting}
+            className="flex-1 py-4 bg-emerald-600 text-white rounded-xl font-black text-xs uppercase tracking-[0.2em] hover:bg-emerald-500 disabled:opacity-20 disabled:grayscale transition-all shadow-lg shadow-emerald-900/20"
+          >
+            {isConverting ? "Converting..." : `Run Conversion (${files.length})`}
+          </button>
+          
           {results.length > 0 && !isConverting && (
-            <div className="flex flex-col gap-3">
-              <button onClick={downloadAll} className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-500/20">Download ZIP ({results.length})</button>
-              <button onClick={() => { setFiles([]); setResults([]); setProgress(0); }} className="text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-red-500 py-2">Start Over</button>
-            </div>
+            <button 
+              onClick={downloadZip}
+              className="px-8 py-4 bg-zinc-100 text-black rounded-xl font-black text-xs uppercase tracking-[0.2em] hover:bg-white transition-all"
+            >
+              Get ZIP
+            </button>
           )}
         </div>
+
+        {/* Result Table */}
+        {results.length > 0 && (
+          <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-4">
+            <h2 className="text-[10px] font-black uppercase text-zinc-500 mb-4 tracking-widest">Successful Conversions</h2>
+            <div className="grid grid-cols-1 gap-1 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
+              {results.map((res) => (
+                <div key={res.id} className="flex items-center justify-between p-3 bg-black/40 rounded-lg text-[10px] border border-zinc-800/50">
+                  <span className="truncate text-zinc-400 max-w-[280px]">{res.name}</span>
+                  <a href={res.url} download={res.name} className="text-emerald-500 font-black hover:text-emerald-400 underline uppercase tracking-tighter">Download</a>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Activity Console */}
+        <div className="flex flex-col h-48 bg-black border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
+          <div className="bg-zinc-900 px-4 py-2 border-b border-zinc-800 flex justify-between items-center">
+            <span className="text-[9px] font-black text-zinc-500 tracking-widest uppercase flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              Live Activity Console
+            </span>
+            <button onClick={() => setLogs([])} className="text-[9px] text-zinc-600 hover:text-zinc-400 font-bold uppercase">Clear</button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-1.5 font-mono text-[10px] custom-scrollbar bg-[radial-gradient(#1a1a1a_1px,transparent_1px)] bg-[size:16px_16px]">
+            {logs.length === 0 && <div className="text-zinc-800 italic">Waiting for input sequence...</div>}
+            {logs.map((log) => (
+              <div key={log.id} className="flex gap-3 leading-relaxed">
+                <span className="text-zinc-700 shrink-0">[{log.timestamp}]</span>
+                <span className={`
+                  ${log.type === "success" ? "text-emerald-500" : ""}
+                  ${log.type === "error" ? "text-red-500" : ""}
+                  ${log.type === "process" ? "text-blue-400" : ""}
+                  ${log.type === "info" ? "text-zinc-400" : ""}
+                `}>
+                  {log.message}
+                </span>
+              </div>
+            ))}
+            <div ref={consoleEndRef} />
+          </div>
+        </div>
+
       </div>
+
+      <style jsx global>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #27272a; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+      `}</style>
     </div>
   );
 }
