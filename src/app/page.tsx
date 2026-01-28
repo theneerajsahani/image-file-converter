@@ -55,54 +55,47 @@ export default function Home() {
     setFiles(validFiles);
     setResults([]);
     setProgress(0);
-    addLog(`System: ${validFiles.length} files staged for conversion.`, "info");
+    addLog(`System: ${validFiles.length} files staged. Strategy: Raw Pixel Extraction.`, "info");
   };
 
-  const convertSingleFile = async (file: File, heic2any: any): Promise<ConvertedFile> => {
-    // Diagnostic: Read first 16 bytes
-    const buf = await file.slice(0, 16).arrayBuffer();
-    const hex = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-    addLog(`Header [${file.name.slice(-10)}]: ${hex}`, "info");
-
-    // Attempt 1: JPEG with Multiple Support
+  const convertSingleFile = async (file: File): Promise<ConvertedFile> => {
     try {
-      addLog(`Task: Primary JPEG Extract...`, "process");
-      const converted = await heic2any({
-        blob: file,
-        toType: "image/jpeg",
-        quality: 0.7,
-        multiple: true // Handle multi-image containers
-      });
+      addLog(`[${file.name}] Strategy C: Decoding raw pixels...`, "process");
       
-      const resultBlob = Array.isArray(converted) ? converted[0] : converted;
-      return {
-        id: Math.random().toString(36).substr(2, 9),
-        name: file.name.replace(/\.[^/.]+$/, "") + ".jpg",
-        url: URL.createObjectURL(resultBlob),
-        blob: resultBlob
-      };
-    } catch (err: any) {
-      addLog(`JPEG Method Failed. Trying PNG Fallback...`, "info");
-    }
+      const decode = (await import("heic-decode")).default;
+      const buffer = await file.arrayBuffer();
+      const { width, height, data } = await decode({ buffer: new Uint8Array(buffer) });
 
-    // Attempt 2: PNG Fallback
-    try {
-      addLog(`Task: Safe-Mode PNG Extract...`, "process");
-      const pngConverted = await heic2any({
-        blob: file,
-        toType: "image/png",
-        multiple: true
-      });
+      addLog(`[${file.name}] Pixel map extracted (${width}x${height}). Painting to canvas...`, "info");
+
+      // Use Canvas to convert raw pixels to JPEG
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
       
-      const pngBlob = Array.isArray(pngConverted) ? pngConverted[0] : pngConverted;
-      return {
-        id: Math.random().toString(36).substr(2, 9),
-        name: file.name.replace(/\.[^/.]+$/, "") + ".jpg",
-        url: URL.createObjectURL(pngBlob),
-        blob: pngBlob
-      };
+      if (!ctx) throw new Error("Could not initialize 2D context");
+
+      const imageData = new ImageData(new Uint8ClampedArray(data), width, height);
+      ctx.putImageData(imageData, 0, 0);
+
+      return new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve({
+              id: Math.random().toString(36).substr(2, 9),
+              name: file.name.replace(/\.[^/.]+$/, "") + ".jpg",
+              url: URL.createObjectURL(blob),
+              blob: blob
+            });
+          } else {
+            reject(new Error("Canvas to JPEG conversion failed"));
+          }
+        }, "image/jpeg", 0.9);
+      });
     } catch (err: any) {
-      throw new Error("HEIF Decoder failed to read this specific encoding profile.");
+      console.error(err);
+      throw new Error(err?.message || "Internal Decoder Error");
     }
   };
 
@@ -111,39 +104,34 @@ export default function Home() {
     setIsConverting(true);
     setResults([]);
     setProgress(0);
-    addLog("System: Loading WASM Decoders...", "process");
+    addLog("System: Initializing Low-Level Decoders...", "process");
 
     try {
-      const lib: any = await import("heic2any");
-      const heic2any = lib.default || lib;
-      
-      addLog("System: Decoders Active.", "success");
-
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        addLog(`>> UNIT [${i+1}/${files.length}]: ${file.name}`, "process");
+        addLog(`>> Processing [${i+1}/${files.length}]: ${file.name}`, "process");
         
         try {
-          const res = await convertSingleFile(file, heic2any);
+          const res = await convertSingleFile(file);
           setResults(prev => [...prev, res]);
           addLog(`✓ SUCCESS: ${res.name}`, "success");
         } catch (err: any) {
-          addLog(`✗ ERROR: ${err?.message || "Incompatible format"}`, "error");
+          addLog(`✗ ERROR: ${err?.message}`, "error");
         }
         
         setProgress(Math.round(((i + 1) / files.length) * 100));
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, 50));
       }
-      addLog("Sequence terminated. Check Output Vault.", "info");
+      addLog("Batch sequence completed.", "success");
     } catch (error: any) {
-      addLog(`CRITICAL SYSTEM ERROR: ${error?.message}`, "error");
+      addLog(`FATAL SYSTEM ERROR: ${error?.message}`, "error");
     } finally {
       setIsConverting(false);
     }
   };
 
   const downloadZip = async () => {
-    addLog("Packaging results...", "process");
+    addLog("Building ZIP package...", "process");
     const JSZip = (await import("jszip")).default;
     const zip = new JSZip();
     results.forEach(res => zip.file(res.name, res.blob));
@@ -153,24 +141,19 @@ export default function Home() {
     link.href = url;
     link.download = "converted_images.zip";
     link.click();
-    addLog("Archive delivered.", "success");
+    addLog("Download sequence initiated.", "success");
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center py-10 px-4 bg-[#020202] text-zinc-300 font-mono">
+    <div className="flex min-h-screen flex-col items-center py-10 px-4 bg-[#010101] text-zinc-400 font-mono">
       <div className="w-full max-w-2xl flex flex-col gap-6">
         
-        <div className="flex justify-between items-center border-b border-zinc-900 pb-8">
+        <div className="flex justify-between items-end border-b border-zinc-900 pb-8">
           <div>
-            <h1 className="text-2xl font-black tracking-tighter text-emerald-500 uppercase">HEIC_ENGINE_V2.2</h1>
-            <p className="text-[8px] text-zinc-600 uppercase tracking-[0.4em] mt-1 italic">Multi-Threaded Virtual Decoders • 100% Local</p>
+            <h1 className="text-2xl font-black tracking-tighter text-emerald-500 uppercase">HEIC_RAW_DECODER_V3.0</h1>
+            <p className="text-[8px] text-zinc-700 uppercase tracking-[0.4em] mt-1">Direct Pixel Extraction • No Proxy • 100% Local</p>
           </div>
-          <div className="flex flex-col items-end">
-             <span className={`text-[10px] font-bold ${isConverting ? 'text-emerald-500 animate-pulse' : 'text-zinc-800'}`}>
-               {isConverting ? "EXECUTING_BATCH" : "SYSTEM_READY"}
-             </span>
-             <span className="text-[8px] text-zinc-900">KERNEL_MODE: STABLE</span>
-          </div>
+          <div className="text-[10px] text-zinc-800 font-black">CORE_STABLE</div>
         </div>
 
         <div 
@@ -178,16 +161,13 @@ export default function Home() {
           onDragLeave={() => setIsDragging(false)}
           onDrop={(e) => { e.preventDefault(); setIsDragging(false); handleFiles(e.dataTransfer.files); }}
           className={`
-            relative h-44 border border-zinc-900 rounded-2xl flex flex-col items-center justify-center gap-2 transition-all duration-700
-            ${isDragging ? "border-emerald-500 bg-emerald-500/[0.02]" : "bg-zinc-950/20 hover:bg-zinc-950/40"}
+            relative h-36 border border-zinc-900 rounded-2xl flex flex-col items-center justify-center gap-2 transition-all duration-500
+            ${isDragging ? "border-emerald-500 bg-emerald-500/[0.01]" : "bg-zinc-950/10 hover:bg-zinc-950/30"}
           `}
         >
           <input type="file" accept=".heic,.heif" multiple onChange={(e) => handleFiles(e.target.files)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20" />
-          <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all ${isDragging ? 'bg-emerald-500 text-black rotate-12' : 'bg-zinc-900 text-zinc-700'}`}>
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"></path></svg>
-          </div>
-          <p className="text-[10px] font-black uppercase tracking-widest text-zinc-600">
-            {isDragging ? "Deploy Sequence" : "Initialize Input Sequence"}
+          <p className="text-[9px] font-black uppercase tracking-widest text-zinc-800">
+            {isDragging ? "Drop Data" : "Initialize Input"}
           </p>
         </div>
 
@@ -195,56 +175,56 @@ export default function Home() {
           <button 
             onClick={convertImages}
             disabled={files.length === 0 || isConverting}
-            className="flex-1 py-5 bg-emerald-600 text-black rounded-xl font-black text-[10px] uppercase tracking-[0.4em] hover:bg-emerald-400 disabled:opacity-5 transition-all shadow-[0_0_20px_rgba(16,185,129,0.1)]"
+            className="flex-1 py-5 bg-emerald-600 text-black rounded-xl font-black text-[10px] uppercase tracking-[0.4em] hover:bg-emerald-400 disabled:opacity-5 transition-all"
           >
-            {isConverting ? "PROCESSING..." : `RUN_BATCH (${files.length})`}
+            {isConverting ? "DECODING..." : `EXEC_BATCH (${files.length})`}
           </button>
           
           {results.length > 0 && !isConverting && (
             <button onClick={downloadZip} className="px-10 py-5 bg-white text-black rounded-xl font-black text-[10px] uppercase tracking-[0.4em] hover:bg-zinc-200 transition-all">
-              GET_ZIP
+              EXPORT_ZIP
             </button>
           )}
         </div>
 
         {results.length > 0 && (
-          <div className="bg-zinc-950/50 rounded-2xl border border-zinc-900 p-5 space-y-4">
+          <div className="bg-zinc-950/30 rounded-2xl border border-zinc-900 p-5 space-y-4">
             <div className="flex justify-between items-center border-b border-zinc-900/50 pb-3">
-              <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Decrypted Assets</span>
-              <span className="text-[8px] text-emerald-500/30 font-bold">{results.length} UNITS_READY</span>
+              <span className="text-[9px] font-black text-zinc-700 uppercase tracking-widest">Decrypted Assets</span>
+              <span className="text-[8px] text-emerald-500/20 font-bold">{results.length} UNITS</span>
             </div>
-            <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
+            <div className="grid grid-cols-1 gap-1 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
               {results.map((res) => (
-                <div key={res.id} className="flex items-center justify-between p-3 bg-black/40 rounded-xl border border-zinc-900/50 hover:border-emerald-500/20 transition-colors">
-                  <span className="truncate text-zinc-500 text-[10px] max-w-[280px] font-bold">{res.name}</span>
-                  <a href={res.url} download={res.name} className="text-emerald-500 font-black text-[9px] hover:text-emerald-300 uppercase tracking-tighter border-b border-emerald-500/20">Extract</a>
+                <div key={res.id} className="flex items-center justify-between p-3 bg-black rounded-xl border border-zinc-900/50">
+                  <span className="truncate text-zinc-600 text-[10px] max-w-[300px]">{res.name}</span>
+                  <a href={res.url} download={res.name} className="text-emerald-500 font-black text-[9px] hover:text-emerald-300 uppercase tracking-tighter">Download</a>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        <div className="flex flex-col h-72 bg-black border border-zinc-900 rounded-2xl overflow-hidden shadow-2xl">
+        <div className="flex flex-col h-80 bg-black border border-zinc-900 rounded-2xl overflow-hidden shadow-2xl">
           <div className="bg-zinc-950 px-5 py-3 border-b border-zinc-900 flex justify-between items-center">
-            <span className="text-[9px] font-black text-zinc-700 tracking-[0.3em] uppercase flex items-center gap-2">
-              <span className={`w-1.5 h-1.5 rounded-full ${isConverting ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-800'}`}></span>
-              Log_Buffer
+            <span className="text-[9px] font-black text-zinc-800 tracking-[0.3em] uppercase flex items-center gap-2">
+              <span className={`w-1 h-1 rounded-full ${isConverting ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-900'}`}></span>
+              System_Buffer
             </span>
             <div className="flex gap-4 items-center">
-              <span className="text-[8px] text-zinc-800 font-mono">FLOW_RATE: {progress}%</span>
-              <button onClick={() => setLogs([])} className="text-[8px] text-zinc-800 hover:text-zinc-500 font-black uppercase tracking-tighter">Flush</button>
+              <span className="text-[8px] text-zinc-900 font-mono">{progress}%</span>
+              <button onClick={() => setLogs([])} className="text-[8px] text-zinc-900 hover:text-zinc-600 font-black uppercase tracking-tighter">Purge</button>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-5 space-y-2 font-mono text-[10px] custom-scrollbar">
-            {logs.length === 0 && <div className="text-zinc-900 italic tracking-widest">Awaiting Command...</div>}
+          <div className="flex-1 overflow-y-auto p-5 space-y-2 font-mono text-[9px] custom-scrollbar">
+            {logs.length === 0 && <div className="text-zinc-900 italic tracking-[0.4em]">STANDBY...</div>}
             {logs.map((log) => (
-              <div key={log.id} className="flex gap-3 leading-tight border-l border-zinc-900 pl-3">
-                <span className="text-zinc-800 shrink-0 select-none">[{log.timestamp}]</span>
+              <div key={log.id} className="flex gap-3 leading-tight">
+                <span className="text-zinc-900 shrink-0">[{log.timestamp}]</span>
                 <span className={`
-                  ${log.type === "success" ? "text-emerald-700" : ""}
-                  ${log.type === "error" ? "text-red-900" : ""}
-                  ${log.type === "process" ? "text-zinc-500" : ""}
-                  ${log.type === "info" ? "text-zinc-700" : ""}
+                  ${log.type === "success" ? "text-emerald-800" : ""}
+                  ${log.type === "error" ? "text-red-950" : ""}
+                  ${log.type === "process" ? "text-zinc-600" : ""}
+                  ${log.type === "info" ? "text-zinc-800" : ""}
                 `}>
                   {log.message}
                 </span>
@@ -256,10 +236,9 @@ export default function Home() {
       </div>
 
       <style jsx global>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 2px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 1px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #0f0f0f; border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #1a1a1a; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #0a0a0a; }
       `}</style>
     </div>
   );
