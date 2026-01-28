@@ -19,6 +19,7 @@ interface LogEntry {
 export default function Home() {
   const [files, setFiles] = useState<File[]>([]);
   const [isConverting, setIsConverting] = useState(false);
+  const [fileStatuses, setFileStatuses] = useState<Record<string, string>>({});
   const [results, setResults] = useState<ConvertedFile[]>([]);
   const [progress, setProgress] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -54,6 +55,9 @@ export default function Home() {
     }
 
     setFiles(validFiles);
+    const initialStatuses: Record<string, string> = {};
+    validFiles.forEach(f => initialStatuses[f.name] = "pending");
+    setFileStatuses(initialStatuses);
     setResults([]);
     setProgress(0);
     addLog(`Loaded ${validFiles.length} files. Ready to convert.`, "success");
