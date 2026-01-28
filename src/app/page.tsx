@@ -102,34 +102,26 @@ export default function Home() {
       const lib: any = await import("heic-decode");
       const decode = lib.default || lib;
       
-      const fileList = [...files];
-      const total = fileList.length;
-      let completed = 0;
-      const CONCURRENCY = 3; // Process 3 at a time for speed without crashing
+      const total = files.length;
+      addLog("ENGINE: SEQUENTIAL_MODE_ACTIVE", "info");
 
-      addLog(`ENGINE: CORE_CONCURRENCY=${CONCURRENCY}`, "info");
-
-      const processBatch = async () => {
-        while (fileList.length > 0) {
-          const file = fileList.shift();
-          if (!file) break;
-
-          addLog(`START: ${file.name}`, "process");
-          try {
-            const res = await convertSingleFile(file, decode);
-            setResults(prev => [...prev, res]);
-            addLog(`DONE: ${res.name}`, "success");
-          } catch (err: any) {
-            addLog(`FAIL: ${file.name} (${err.message})`, "error");
-          }
-          completed++;
-          setProgress(Math.round((completed / total) * 100));
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        addLog(`START: ${file.name} [${i+1}/${total}]`, "process");
+        
+        try {
+          const res = await convertSingleFile(file, decode);
+          setResults(prev => [...prev, res]);
+          addLog(`DONE: ${res.name}`, "success");
+        } catch (err: any) {
+          addLog(`FAIL: ${file.name} (${err.message})`, "error");
         }
-      };
-
-      // Fire off concurrent workers
-      await Promise.all(Array(CONCURRENCY).fill(null).map(processBatch));
-      addLog("TURBO_BATCH_COMPLETE", "success");
+        
+        setProgress(Math.round(((i + 1) / total) * 100));
+        // Minimal delay just to keep the UI snappy
+        await new Promise(r => setTimeout(r, 10));
+      }
+      addLog("BATCH_COMPLETE", "success");
     } catch (error: any) {
       addLog(`FATAL: ${error?.message}`, "error");
     } finally {
